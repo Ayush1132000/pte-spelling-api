@@ -117,6 +117,57 @@ app.post("/api/admin/section-upsert", async (req, res) => {
   }
 });
 
+// Simple admin save via query params (easy for beginner)
+// Example:
+// /api/admin/save?token=YOURTOKEN&section=Section%20Name&words=word1,word2,word3
+app.get("/api/admin/save", async (req, res) => {
+  try {
+    const token = req.query.token;
+    if (!token || token !== process.env.ADMIN_TOKEN) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const name = String(req.query.section || "").trim();
+    const wordsCsv = String(req.query.words || "").trim();
+
+    if (!name || !wordsCsv) {
+      return res.status(400).json({ error: "section and words are required" });
+    }
+
+    const cleanWords = wordsCsv
+      .split(",")
+      .map(w => w.trim())
+      .filter(Boolean);
+
+    if (cleanWords.length === 0) {
+      return res.status(400).json({ error: "No valid words found" });
+    }
+
+    const sql = getSql();
+
+    const inserted = await sql`
+      INSERT INTO sections (name)
+      VALUES (${name})
+      ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+      RETURNING id
+    `;
+    const sectionId = inserted[0].id;
+
+    await sql`DELETE FROM words WHERE section_id = ${sectionId}`;
+
+    for (const w of cleanWords) {
+      await sql`
+        INSERT INTO words (section_id, word)
+        VALUES (${sectionId}, ${w})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    res.json({ ok: true, sectionId: String(sectionId), savedWords: cleanWords.length });
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
 app.listen(port, () => {
   console.log(`API running on port ${port}`);
 });
